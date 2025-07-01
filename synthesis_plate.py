@@ -6,6 +6,7 @@ from PIL import ImageFont, ImageDraw, Image
 import numpy as np
 import progressbar
 import math
+import csv
 from generate_image import *
 from utils import *
 from aug import augmention
@@ -55,7 +56,7 @@ def sort_boxes(boxes, max_distance=0.3):
 
     sorted_line_1 = [x for x in sorted(line_1, key = lambda line_1: line_1[0])]
     if len(line_2) > 0:
-    	sorted_line_2 = [x for x in sorted(line_2, key = lambda line_2: line_2[0])]
+        sorted_line_2 = [x for x in sorted(line_2, key = lambda line_2: line_2[0])]
     return sorted_line_1 + sorted_line_2
 
 def segment_and_get_boxes(img, sample, textsize, margin = 3):
@@ -74,7 +75,7 @@ def segment_and_get_boxes(img, sample, textsize, margin = 3):
     thresh[:int(height*0.05), :] = 0
     thresh[int(height*0.95):, :] = 0
     # cv2.imshow('thresh', thresh)
-    _, contours, hier = cv2.findContours(thresh.copy(),cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
+    contours, hier = cv2.findContours(thresh.copy(),cv2.RETR_TREE,cv2.CHAIN_APPROX_SIMPLE)
     sorted_contours = sorted(contours, key = cv2.contourArea, reverse = True)
     list_box = []
     for i in range(len(sorted_contours)):
@@ -125,6 +126,10 @@ def generate_yolo_label(boxes, sample_formated, filename):
 			x, y, w, h = boxes[i]
 			f.write('{} {} {} {} {}\n'.format(box_label[sample_formated[i]], x, y, w, h))
 
+def add_to_csv(csv_writer, image_path, plate_text):
+	"""Add a row to the CSV annotations file"""
+	csv_writer.writerow([image_path, plate_text])
+
 def visualize(img, boxes, label):
 	height, width, _ = img.shape
 	#print(boxes)
@@ -148,29 +153,54 @@ if __name__ == '__main__':
 	parser.add_argument('--output_dir', default='output',
 	                   help='Output directory')
 
+	parser.add_argument('--csv_name', default='annotations.csv',
+	                   help='Name of the CSV annotations file')
+
+	parser.add_argument('--no_yolo_txt', action='store_true',
+	                   help='Do not generate YOLO .txt label files by default')
+
 	args = parser.parse_args()
 	if not os.path.exists(args.output_dir):
 		os.mkdir(args.output_dir)
-	err = 0
-	for i in progressbar.progressbar(range(int(args.numb))):
-		try:
-			filename = os.path.join(args.output_dir ,'syn_{}.jpg'.format(i))
-			idx = random.randint(0, total_template - 1)
-			template = available_template[idx]
-			sample = generate_sample(template)
-			base_img, textsize = generate_plate(sample)
-			# aug_img = augmention(base_img)
-			width, height = base_img.size
-			boxes = segment_and_get_boxes(np.array(base_img), sample, textsize)
-			labels = sample.replace('-', '').replace('.', '').replace('/', '')
-			generate_yolo_label(boxes, labels, filename)
-			base_img.save(filename)
-			if visual:
-				visualize(np.array(base_img), boxes, labels)
-		except AssertionError:
-			err += 1
+	
+	# Create CSV file for annotations
+	csv_path = os.path.join(args.output_dir, args.csv_name)
+	with open(csv_path, 'w', newline='', encoding='utf-8') as csv_file:
+		csv_writer = csv.writer(csv_file)
+		# Write header
+		csv_writer.writerow(['image_path', 'plate_text'])
+		
+		err = 0
+		for i in progressbar.progressbar(range(int(args.numb))):
+			try:
+				filename = os.path.join(args.output_dir ,'syn_{}.jpg'.format(i))
+				idx = random.randint(0, total_template - 1)
+				template = available_template[idx]
+				sample = generate_sample(template)
+				base_img, textsize = generate_plate(sample)
+				# aug_img = augmention(base_img)
+				width, height = base_img.size
+				boxes = segment_and_get_boxes(np.array(base_img), sample, textsize)
+				labels = sample.replace('-', '').replace('.', '').replace('/', '')
+				
+				if not args.no_yolo_txt:
+					generate_yolo_label(boxes, labels, filename)
+				
+				base_img.save(filename)
+				
+				# Add to CSV annotations
+				relative_path = os.path.relpath(filename, args.output_dir)
+				plate_text = sample.replace('-', '').replace('.', '').replace('/', '')
+				add_to_csv(csv_writer, relative_path, plate_text)
+				
+				if visual:
+					visualize(np.array(base_img), boxes, labels)
+			except AssertionError:
+				err += 1
+	
 	print('Completed !')
 	print('Error: {} images'.format(err))
+	print('CSV annotations saved to: {}'.format(csv_path))
 	
 
 
